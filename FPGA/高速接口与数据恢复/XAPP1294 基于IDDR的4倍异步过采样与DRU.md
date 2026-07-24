@@ -22,7 +22,7 @@
 - `E4[3:0]` 通过比较相邻样本定位数据边沿，FSM 再选择远离边沿的安全采样点。
 - 四状态循环相位首尾回绕时，需要用 bit skip 修正输入与本地时钟累计产生的位数差。
 - 100 MHz 输出域名义上每周期恢复 2 bit；补偿周期可以输出 1 bit 或 3 bit。
-- XAPP1294 与 XAPP881 的 DRU 思想相同，但采样原语、内部样本编号和输出接口不能混用。
+- XAPP1294 与 XAPP523 的 DRU 思想相同，但采样原语、内部样本编号和输出接口不能混用。
 
 ## 总体数据流
 
@@ -168,7 +168,7 @@ $$
 
 状态表示当前采用哪一个候选采样相位，不是输入数据值，也不直接等于某个 `E4` 区间。
 
-Figure 1 的状态转移关系与 XAPP881 的四状态相位跟踪器一致：
+Figure 1 的状态转移关系与 XAPP523 的四状态相位跟踪器一致：
 
 | 当前状态 | 边沿条件 | 下一状态 |
 | --- | --- | --- |
@@ -320,11 +320,11 @@ FSM 会保持已有采样相位，但无法获得新的相位漂移信息。因�
 
 时间编号 `S0～S3`、FSM 状态编号和 `dout_raw[3:0]` 是不同层次的坐标。解释算法时可以按时间排序，但工程接入时必须根据 RTL 核对实际拼接方向和输出位序。
 
-## 与 XAPP881 的关系
+## 与 XAPP523 的关系
 
-| 对比项 | XAPP881 | XAPP1294 |
+| 对比项 | XAPP523 | XAPP1294 |
 | --- | --- | --- |
-| 采样结构 | IODELAYE1 + Master/Slave ISERDESE1 | IDDR双边沿采样 |
+| 采样结构 | IODELAYE2 + Master/Slave ISERDESE2 | IDDR双边沿采样 |
 | 内部样本 | 8个重映射样本 | 4-bit raw samples |
 | 边沿检测 | `E4[3:0]` | `E4[3:0]` |
 | 相位跟踪 | 四状态FSM | 四状态FSM |
@@ -343,9 +343,9 @@ FSM 会保持已有采样相位，但无法获得新的相位漂移信息。因�
 
 以下内容不能直接混用：
 
-- XAPP881 的 `Q(0)～Q(7)` 重映射；
-- Master/Slave ISERDESE1 输出编号；
-- XAPP881 的固定 10-bit 接口和 clock enable；
+- XAPP523 的 `Q(0)～Q(7)` 重映射；
+- Master/Slave ISERDESE2 输出编号；
+- XAPP523 的固定 10-bit 接口和 clock enable；
 - XAPP1294 的 `dout_raw[3:0]` 实际位序；
 - 两种结构各自的原语和时钟实现。
 
@@ -377,13 +377,13 @@ FSM 会保持已有采样相位，但无法获得新的相位漂移信息。因�
 
 ## See Also
 
-- [[XAPP881 Virtex-6 4倍异步过采样与DRU]]：相同 DRU 思想的高速 ISERDESE1 实现，包含更详细的循环相位与 bit-skip 图解。
+- [[XAPP523 7系列LVDS 4倍异步过采样与DRU]]：相同DRU思想的高速7 Series `ISERDESE2`实现，包含8样本重映射、循环相位和bit-skip图解。
 - [[基于IDDR的4倍异步过采样与数据恢复]]：按具体工程时钟缩放并包含 RTL 片段的 IDDR 实现笔记。
 
 ## References
 
 - Xilinx, *Lightweight and Scalable 4x Oversampling Asynchronous Data Recovery Unit for Single-Ended or Differential Inputs*, XAPP1294 v1.0, 2016-08-30。
-- Xilinx, *Virtex-6 FPGA LVDS 4X Asynchronous Oversampling at 1.25 Gb/s*, XAPP881 v1.1。
+- Xilinx, *LVDS 4x Asynchronous Oversampling Using 7 Series FPGAs and Zynq-7000 AP SoCs*, XAPP523 v1.1。
 - 本地原始文档：`D:\0_MySpace\01_技术文档\05_FPGA_learning\xapp1294-4x-oversampling-async-dru.pdf`
 
 ## Tags

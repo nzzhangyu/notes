@@ -1,6 +1,6 @@
 # 基于 IDDR 的 4 倍异步过采样与数据恢复
 
-> 该设计利用 `IDDR` 对异步串行数据进行 4 倍过采样，通过相邻样点异或检测数据边沿，再由四状态相位跟踪器选择稳定样点，并通过 bit-skip 补偿收发时钟频差。其整体思想高度吻合 Xilinx XAPP1294，状态机原理可进一步追溯到 XAPP881。
+> 该设计利用 `IDDR` 对异步串行数据进行 4 倍过采样，通过相邻样点异或检测数据边沿，再由四状态相位跟踪器选择稳定样点，并通过 bit-skip 补偿收发时钟频差。其整体思想高度吻合 Xilinx XAPP1294，高速 SelectIO 对应方案参见 XAPP523。
 
 ## 1. 设计目标
 
@@ -298,12 +298,12 @@ II、ID、IDD 流水
 - 使用 bit skip 补偿异步频差；
 - 提供 raw data 调试端口。
 
-XAPP1294 的状态机思想又引用了更早的 XAPP881：
+XAPP1294 与 XAPP523 使用相同的DRU算法骨架：
 
 ```text
-XAPP881
-高速 ISERDES/IODELAY 方案
-提出 E4、四状态相位选择和 bit-skip
+XAPP523
+7 Series高速 ISERDESE2/IODELAYE2 方案
+使用E4、四状态相位选择和bit skip
         │
         ▼
 XAPP1294
@@ -328,9 +328,9 @@ DRU 依赖 `E4` 检测数据边沿。若输入长时间保持全 0 或全 1，�
 
 输入 `RxD` 对本地时钟异步，采样点仍可能落在数据边沿附近。过采样和流水寄存器能够选择更稳定的样点、限制亚稳态传播风险，但不能证明亚稳态绝对不会发生。
 
-### 11.3 XAPP881 的高速指标不能直接套用
+### 11.3 XAPP523 的高速指标不能直接套用
 
-XAPP881 使用两套 `ISERDESE1`、`IODELAYE1`、MMCM 多相位时钟和 BUFIO/BUFG 相位校准。当前代码没有这些结构，因此 XAPP881 给出的接收眼图和抖动容限不能直接作为当前设计指标。
+XAPP523 使用两套 `ISERDESE2`、`IODELAYE2`、`MMCME2_ADV`多相位时钟和BUFIO/BUFG相位校准。当前代码没有这些结构，因此XAPP523给出的接收眼图和抖动容限不能直接作为当前设计指标。
 
 ### 11.4 `after 0.1 ns` 不是硬件延迟单元
 
@@ -366,7 +366,7 @@ signal <= value after 0.1 ns;
 → 用 0/1/2 bit 输出补偿时钟频差
 ```
 
-它是一个轻量级异步数据恢复器，而不是普通同步器或多数表决器。代码与 Xilinx XAPP1294 官方参考设计高度一致，属于 XAPP881/XAPP1294 系列 4 倍异步过采样 DRU 思想的工程化裁剪版本。
+它是一个轻量级异步数据恢复器，而不是普通同步器或多数表决器。代码与 Xilinx XAPP1294 官方参考设计高度一致，属于 XAPP523/XAPP1294 系列4倍异步过采样DRU思想的工程化裁剪版本。
 
 ## 14. Verilog-2001 实现
 
@@ -416,14 +416,14 @@ signal <= value after 0.1 ns;
 ## References
 
 - [AMD/Xilinx XAPP1294 — Lightweight and Scalable 4x Oversampling Asynchronous Data Recovery Unit](https://docs.amd.com/v/u/en-US/xapp1294-4x-oversampling-async-dru)
-- [AMD/Xilinx XAPP881 — Virtex-6 FPGA LVDS 4X Asynchronous Oversampling at 1.25 Gb/s](https://docs.amd.com/v/u/en-US/xapp881_V6_4X_Asynch_OverSampling)
+- [AMD/Xilinx XAPP523 — LVDS 4x Asynchronous Oversampling Using 7 Series FPGAs](https://docs.amd.com/v/u/en-US/xapp523-lvds-4x-asynchronous-oversampling)
 - 工程源码：`Data_Rec_DRU.vhd`
 
 ## See Also
 
 - [[XAPP1294 基于IDDR的4倍异步过采样与DRU]]：XAPP1294 原文机制专篇；本笔记则保留具体工程的时钟缩放和 RTL 解释。
-- [[XAPP881 Virtex-6 4倍异步过采样与DRU]]：XAPP881 原始 Virtex-6 高速方案，使用 `ISERDESE1`、`IODELAYE1`、MMCM 和 BUFIO/BUFG 相位校准；不要与本笔记的 IDDR/XAPP1294 轻量实现直接混用。
+- [[XAPP523 7系列LVDS 4倍异步过采样与DRU]]：7 Series高速方案，使用`ISERDESE2`、`IODELAYE2`、`MMCME2_ADV`和BUFIO/BUFG相位校准；不要与本笔记的IDDR/XAPP1294轻量实现直接混用。
 
 ## Tags
 
-`FPGA` `LVDS` `Oversampling` `DRU` `CDR` `IDDR` `XAPP1294` `XAPP881` `Artix-7`
+`FPGA` `LVDS` `Oversampling` `DRU` `CDR` `IDDR` `XAPP1294` `XAPP523` `Artix-7`

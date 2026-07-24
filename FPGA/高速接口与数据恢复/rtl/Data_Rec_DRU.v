@@ -1,11 +1,8 @@
 `timescale 1ns/1ps
 
-// Lightweight 4x oversampling asynchronous data recovery unit.
-//
-// Verilog-2001 translation of the supplied Data_Rec_DRU VHDL source.
-// The original "after 0.1 ns" simulation delays are intentionally omitted.
-// rst is an active-high reset synchronous to both CLK4x and CLK2x. The reset
-// source must meet the recovery/removal requirements of both clock domains.
+// 4x asynchronous oversampling data recovery
+// Verilog-2001
+// Active-high synchronous reset
 
 module Data_Rec_DRU (
     input  wire       RxD,
@@ -17,29 +14,37 @@ module Data_Rec_DRU (
     output reg  [3:0] RawData_o
 );
 
+    // IDDR dual-edge outputs
     wire Q1;
     wire Q2;
 
-    reg Q1F;
-    reg Q2F;
+    // Two consecutive rising/falling sample pairs
     reg Q1R;
+    reg Q1F;
     reg Q2R;
+    reg Q2F;
 
-    reg [3:0] RxRawData;
-    reg [3:0] II;
-    reg [3:0] ID;
-    reg [3:0] IDD;
-    reg       I3DD;
+    // Four-sample pipeline
+    reg [3:0] dout_raw;
+    reg [3:0] dout_raw_d1;
+    reg [3:0] dout_raw_d2;
+    reg [3:0] dout_raw_d3;
+    reg       dout_raw_msb_d3;
+
+    // Edge information and phase state
     reg [3:0] E4;
-    reg [1:0] S;
-    reg [1:0] DVE;
-    reg [1:0] DO;
-    reg [1:0] DV;
+    reg [1:0] EQ;
+    reg [1:0] EQ_next;
 
-    wire [1:0] cDVE;
-    wire [1:0] cDV;
+    // Bit-skip and recovered output
+    reg [1:0] bit_skip_event;
+    reg [1:0] dout;
+    reg [1:0] dout_valid;
 
-    // 7 Series double-data-rate input register.
+    wire [1:0] bit_skip_event_next;
+    wire [1:0] dout_valid_next;
+
+    // 7 Series IDDR input sampling
     IDDR #(
         .DDR_CLK_EDGE("SAME_EDGE_PIPELINED"),
         .INIT_Q1      (1'b0),
@@ -55,130 +60,147 @@ module Data_Rec_DRU (
         .S (1'b0)
     );
 
-    // For an UltraScale+ implementation, replace the IDDR instance above
-    // with an IDDRE1 configured for SAME_EDGE_PIPELINED operation. The exact
-    // C/CB clock connections must follow the target device documentation.
+    // UltraScale+ migration: replace with IDDRE1
 
-    // Capture two consecutive IDDR output pairs.
+    // Two consecutive DDR sample pairs
+    // Q1: earlier pair; Q2: later pair
+    // R: rising-edge sample; F: falling-edge sample
     always @(posedge CLK4x) begin
         if (rst) begin
-            Q1F <= 1'b0;
-            Q2F <= 1'b0;
             Q1R <= 1'b0;
+            Q1F <= 1'b0;
             Q2R <= 1'b0;
-        end else begin
-            Q1F <= Q1;
+            Q2F <= 1'b0;
+        end 
+        else begin
+            Q2R <= Q1;
             Q2F <= Q2;
-            Q1R <= Q1F;
-            Q2R <= Q2F;
+            Q1R <= Q2R;
+            Q1F <= Q2F;
         end
     end
 
-    // RawData_o[3] is the earliest sample and RawData_o[0] is the latest.
+    // Four-sample packing: earliest sample in MSB
     always @(posedge CLK2x) begin
         if (rst)
-            RxRawData <= 4'b0000;
+            dout_raw <= 4'b0000;
         else
-            RxRawData <= {Q1R, Q2R, Q1F, Q2F};
+            dout_raw <= {Q1R, Q1F, Q2R, Q2F};
     end
 
+    // Raw-sample pipeline stage
     always @(posedge CLK2x) begin
         if (rst)
-            II <= 4'b0000;
+            dout_raw_d1 <= 4'b0000;
         else
-            II <= RxRawData;
+            dout_raw_d1 <= dout_raw;
     end
 
-    // Edge detection includes the boundary between adjacent raw sample words.
+    // Cross-word edge detection and data-select pipeline
     always @(posedge CLK2x) begin
         if (rst) begin
-            ID   <= 4'b0000;
-            IDD  <= 4'b0000;
-            E4   <= 4'b0000;
-            I3DD <= 1'b0;
-        end else begin
-            ID   <= II;
-            IDD  <= ID;
-            E4   <= II ^ {ID[0], II[3:1]};
-            I3DD <= ID[3];
+            dout_raw_d2     <= 4'b0000;
+            dout_raw_d3     <= 4'b0000;
+            E4              <= 4'b0000;
+            dout_raw_msb_d3 <= 1'b0;
+        end 
+        else begin
+            dout_raw_d2     <= dout_raw_d1;
+            dout_raw_d3     <= dout_raw_d2;
+            E4              <= dout_raw_d1
+                             ^ {dout_raw_d2[0], dout_raw_d1[3:1]};
+            dout_raw_msb_d3 <= dout_raw_d2[3];
         end
     end
 
-    assign cDVE[0] = (S == 2'b10) && !E4[3] && E4[2];
-    assign cDVE[1] = (S == 2'b00) && !E4[3] && E4[0];
+    // Positive bit skip: 2 valid bits
+    // Negative bit skip: 0 valid bits
+    assign bit_skip_event_next[0] = (EQ == 2'b10) && !E4[3] && E4[2];
+    assign bit_skip_event_next[1] = (EQ == 2'b00) && !E4[3] && E4[0];
 
-    assign cDV[0] = ~(DVE[0] ^ DVE[1]);
-    assign cDV[1] = DVE[0];
+    // Valid-bit count: 00/01/10 means 0/1/2 bits
+    assign dout_valid_next[0] = ~(bit_skip_event[0] ^ bit_skip_event[1]);
+    assign dout_valid_next[1] = bit_skip_event[0];
 
-    // Four-state phase tracker, selected sample, and bit-skip control.
-    // Nonblocking assignments preserve the old-state sampling behavior of
-    // the original clocked VHDL process.
+    // State register
+    always @(posedge CLK2x) begin
+        if (rst)
+            EQ <= 2'b00;
+        else
+            EQ <= EQ_next;
+    end
+
+    // Next-state logic
+    always @(*) begin
+        EQ_next = EQ;
+
+        case (EQ)
+            2'b00: begin
+                if (E4[0])
+                    EQ_next = 2'b10;
+                else if (E4[3])
+                    EQ_next = 2'b01;
+            end
+
+            2'b01: begin
+                if (E4[1])
+                    EQ_next = 2'b00;
+                else if (E4[0])
+                    EQ_next = 2'b11;
+            end
+
+            2'b11: begin
+                if (E4[2])
+                    EQ_next = 2'b01;
+                else if (E4[1])
+                    EQ_next = 2'b10;
+            end
+
+            2'b10: begin
+                if (E4[3])
+                    EQ_next = 2'b11;
+                else if (E4[2])
+                    EQ_next = 2'b00;
+            end
+
+            default: begin
+                EQ_next = 2'b00;
+            end
+        endcase
+    end
+
+    // Registered output logic
     always @(posedge CLK2x) begin
         if (rst) begin
-            S   <= 2'b00;
-            DVE <= 2'b00;
-            DV  <= 2'b00;
-            DO  <= 2'b00;
+            bit_skip_event  <= 2'b00;
+            dout_valid      <= 2'b00;
+            dout            <= 2'b00;
         end else begin
-            case (S)
-                2'b00: begin
-                    if (E4[0])
-                        S <= 2'b10;
-                    else if (E4[3])
-                        S <= 2'b01;
-                end
+            bit_skip_event <= bit_skip_event_next;
+            dout_valid     <= dout_valid_next;
 
-                2'b01: begin
-                    if (E4[1])
-                        S <= 2'b00;
-                    else if (E4[0])
-                        S <= 2'b11;
-                end
-
-                2'b11: begin
-                    if (E4[2])
-                        S <= 2'b01;
-                    else if (E4[1])
-                        S <= 2'b10;
-                end
-
-                2'b10: begin
-                    if (E4[3])
-                        S <= 2'b11;
-                    else if (E4[2])
-                        S <= 2'b00;
-                end
-
+            case (EQ)
+                2'b00: dout <= {dout_raw_msb_d3, dout_raw_d3[0]};
+                2'b01: dout <= {dout_raw_msb_d3, dout_raw_d3[1]};
+                2'b11: dout <= {dout_raw_msb_d3, dout_raw_d3[2]};
+                2'b10: dout <= {dout_raw_msb_d3, dout_raw_d3[3]};
                 default: begin
-                    // Hold state, matching "when others => null".
-                end
-            endcase
-
-            DVE <= cDVE;
-            DV  <= cDV;
-
-            case (S)
-                2'b00:   DO <= {I3DD, IDD[0]};
-                2'b01:   DO <= {I3DD, IDD[1]};
-                2'b11:   DO <= {I3DD, IDD[2]};
-                2'b10:   DO <= {I3DD, IDD[3]};
-                default: begin
-                    // Hold output, matching "when others => null".
+                    // Hold output
                 end
             endcase
         end
     end
 
-    // Registered user and debug outputs.
+    // Interface output registers
     always @(posedge CLK2x) begin
         if (rst) begin
             Dout      <= 2'b00;
             VO        <= 2'b00;
             RawData_o <= 4'b0000;
         end else begin
-            Dout      <= DO;
-            VO        <= DV;
-            RawData_o <= RxRawData;
+            Dout      <= dout;
+            VO        <= dout_valid;
+            RawData_o <= dout_raw;
         end
     end
 
