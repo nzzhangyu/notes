@@ -478,81 +478,68 @@ puts "ADC data port count = [llength $adc_data_ports]"
 
 ## 11. 工程工作流
 
-1. 明确接口属于系统同步、源同步还是异步关系。
-2. 明确有效边沿、SDR/DDR 模式、时钟周期和时钟参考点。
-3. 获取发送端 `tCO_min/max` 或接收端 `tSU/tH`。
-4. 分别提取 DATA 与 CLK 的互连 min/max。
-5. 列出抖动、PVT、lane skew 和测量/模型误差，避免重复计入。
-6. 建立 setup 与 hold 两张 Timing Budget。
-7. 创建正确的 primary/generated clock。
-8. 同时编写 `set_*_delay -max` 和 `-min`。
-9. 用 `check_timing` 和 timing reports 验证约束覆盖与边沿关系。
-10. 样机阶段通过波形、温度/电压测试和多板统计验证预算。
+1. 明确接口属于系统同步、源同步还是异步关系。…29658 tokens truncated…s.amd.com/v/u/en-US/xapp1252-burst-clk-data-recovery) | v1.3，2019-04-12 | GTH/GTY 突发模式 CDR、快速且有界的锁定时间 | 适合需要 burst-mode 快速锁定的高速链路 |
+| [XAPP1277：Burst Clock Data Recovery for PON](https://docs.amd.com/r/en-US/xapp1277-burst-clk-data-rec-pon-apps-ultrascale/Summary) | v1.2，2024-01-05 | 1.25/2.5 Gb/s PON、同步过采样、突发数据恢复 | 面向 PON/光接入应用，通用性低于 XAPP1240 |
+| [XAPP1248：Receiving SD-SDI](https://docs.amd.com/r/en-US/xapp1248-smpte-sdi-ultrascale-gth-transceivers/Receiving-SD-SDI) | 在线文档 | GTH 对270 Mb/s SD-SDI进行11倍异步过采样，PL中的DRU恢复数据 | 可作为 XAPP1240/NIDRU 的具体应用案例 |
 
-## 12. 常见错误
+## 文档关系
 
-### 错误 1：把 PCB 绝对延迟直接当作 input delay
+```text
+XAPP523
+7 Series LVDS四倍异步过采样
+       │
+XAPP1294
+轻量IDDR四倍过采样
+       │
+       ▼
+XAPP1240
+通用NIDRU、分数倍过采样、动态配置
+       │
+       ├──► XAPP1248：SD-SDI应用
+       └──► XAPP1252/XAPP1277：突发模式CDR
+```
 
-源同步接口应考虑 `tDATA - tCLK`。只加入 DATA 路径而忽略 CLK 路径，会把共同传播延迟误当成相对偏移。
+## XAPP1240 为什么值得优先阅读
 
-### 错误 2：只设置 `-max`
+相较于 XAPP523/XAPP1294 的固定4倍采样结构，XAPP1240 的 NIDRU 更通用：
 
-这只描述 setup 边界，无法完整表达外部 hold 条件。应同时提供 `-min`。
+- 处理来自 SelectIO 或 SerDes 的解串过采样数据；
+- 支持 fractional oversampling ratio；
+- 数据率、输入 ppm 范围、jitter bandwidth 和 jitter peaking 可动态配置；
+- 多通道可共用参考时钟，同时处理不同输入速率；
+- 并行输出宽度可配置，便于连接8-bit或10-bit接口；
+- 支持不中断业务数据的一维水平眼图扫描；
+- 面向7 Series、UltraScale和Versal器件。
 
-### 错误 3：把 `set_output_delay -min` 强制写成正值
+它不再只是简单的四状态采样点选择器，而是更完整的数字 CDR/NIDRU。
 
-`-min` 经常等于 DATA/CLK 最小偏差减去接收端 `tH`，因此负值很常见。
+## 推荐阅读顺序
 
-### 错误 4：使用 typ 参数做量产边界
+1. [[XAPP1294 基于IDDR的4倍异步过采样与DRU]]：理解 IDDR 四点采样、E4、FSM和bit skip。
+2. [[XAPP523 7系列LVDS 4倍异步过采样与DRU]]：理解高速SelectIO、内部样本重映射、固定宽度输出和时钟校准。
+3. XAPP1240：学习分数倍过采样、数字环路、动态配置和眼图扫描。
+4. XAPP1252/XAPP1277：需要突发模式快速锁定时再读。
 
-typ 只表示典型条件，不代表 PVT 极限。优先使用保证的 min/max。
+## 选择建议
 
-### 错误 5：把有限样本实测当作 datasheet 保证值
-
-实测受样本、温度、电压、探头和统计时间限制，应明确记录其证据等级和不确定度。
-
-### 错误 6：未确认时钟参考点
-
-同一组数值在不同 `create_clock` 位置下可能代表不同物理关系。公式、时钟对象与约束端口必须使用同一参考点。
-
-### 错误 7：用 timing exception 隐藏问题
-
-`set_false_path`、clock groups 或 multicycle path 不能用于单纯消除红色违例，必须有真实的功能和架构依据。
-
-## FAQ
-
-### PCB 越长，`set_input_delay` 是否一定越大？
-
-不一定。源同步 DATA 和 CLK 若共同变长且传播速度相近，绝对延迟同时增加，但相对 skew 可能变化很小。应分别计算两条路径。
-
-### 为什么 input delay 的 `-min` 可能为负？
-
-因为参考点位于 FPGA 的 CLK 输入端口。如果 DATA 最早到达时刻早于该参考时钟边沿，计算结果就是负值。
-
-### 为什么 output delay 的 `-min` 常是负数？
-
-接收端要求数据在时钟边沿之后继续保持 `tH`。从发送 FPGA 的输出端口看，这个保持要求通常表示一个负的最小输出延迟。
-
-### 连接器延迟可以忽略吗？
-
-不能一概而论。低速、短连接器且裕量充足时可在早期估算中合并处理；高速或裕量紧张时应使用厂商模型、S 参数或实测值。
-
-### FPGA_A 到 FPGA_B 是否只在 FPGA_A 写 output delay？
-
-FPGA_A 的 output delay 用来验证发送端是否为板级路径和 FPGA_B 接收要求留出足够预算；FPGA_B 仍应有自己的 input delay 和内部 STA。两端约束服务于不同分析边界。
+| 需求 | 优先文档 |
+| --- | --- |
+| 继续学习通用数字过采样 CDR | XAPP1240 |
+| 研究7 Series高速SelectIO四倍采样 | XAPP523 |
+| 接收低于 GT 正常工作下限的 SD-SDI | XAPP1240 + XAPP1248 |
+| 突发数据快速锁定 | XAPP1252 |
+| PON 1.25/2.5 Gb/s 突发接收 | XAPP1277 |
 
 ## See Also
 
-- Xilinx Vivado 时钟定义与 Generated Clock
-- 源同步接口的采样边沿选择与相位调整
-- DDR 输入/输出约束
-- 异步采样与数据恢复
-- PCB/FPC 信号完整性与眼图验证
-
-## Tags
-
-`FPGA` `Xilinx` `Vivado` `XDC` `STA` `Timing` `Input Delay` `Output Delay` `Source Synchronous`
+- [[基于IDDR的4倍异步过采样与数据恢复]]
+- [[XAPP1294 基于IDDR的4倍异步过采样与DRU]]
+- [[XAPP523 7系列LVDS 4倍异步过采样与DRU]]
 
 ## References
 
-当前未提供可引用的器件 datasheet、Xilinx 文档、板级提取结果或实测记录。本文中的公式来自所声明的时序模型，示例数值均为假设；在具体工程中必须使用对应器件、Vivado 版本和板级设计资料复核。
+- AMD/Xilinx 官方文档库；上述版本与发布日期核对于2026-07-24。
+
+## Tags
+
+`FPGA` `Xilinx` `AMD` `CDR` `DRU` `Oversampling` `NIDRU` `SelectIO` `GTH` `GTY`
